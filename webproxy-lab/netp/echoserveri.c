@@ -28,7 +28,9 @@ int main(int argc, char** argv) {
 
         printf("Connected to (%s, %s)\n", client_hostname, client_port);
         echo(connfd);
+        printf("close to (%s, %s)\n", client_hostname, client_port);
         Close(connfd);
     }
+
     exit(0);
 }

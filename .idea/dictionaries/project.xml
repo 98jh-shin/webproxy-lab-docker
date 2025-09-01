@@ -1,7 +1,22 @@
 <component name="ProjectDictionaryState">
   <dictionary name="project">
     <words>
+      <w>cgiargs</w>
+      <w>clientaddr</w>
+      <w>clienterror</w>
+      <w>clientlen</w>
       <w>connfd</w>
+      <w>errnum</w>
+      <w>getaddrinfo</w>
+      <w>hostlen</w>
+      <w>implemennted</w>
+      <w>listenfd</w>
+      <w>longmsg</w>
+      <w>netp</w>
+      <w>requesthdrs</w>
+      <w>salen</w>
+      <w>servlen</w>
+      <w>shortmsg</w>
     </words>
   </dictionary>
 </component>

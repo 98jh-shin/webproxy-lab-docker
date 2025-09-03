@@ -1,14 +1,17 @@
 // ReSharper disable CppParameterMayBeConst
+// ReSharper disable CppParameterMayBeConstPtrOrRef
 #include "csapp.h"
 
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, char *method);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
+void sigchld_handler(int sig);
+
 void doit(int fd) {
     int is_static;
     struct stat sbuf;
@@ -21,8 +24,9 @@ void doit(int fd) {
     Rio_readlineb(&rio, buf, MAXLINE);
     printf("Request headers:\n");
     printf("%s", buf);
+
     sscanf(buf, "%s %s %s", method, uri, version);
-    if (strcasecmp(method, "GET")) {
+    if (strcasecmp(method, "GET") && strcasecmp(method, "HEAD")) {
         clienterror(fd, method, "501", "Not implemented",
                     "Tiny does not implement this method");
         return;
@@ -43,20 +47,20 @@ void doit(int fd) {
                         "Tiny couldn’t read the file");
             return;
         }
-        serve_static(fd, filename, sbuf.st_size);
+        serve_static(fd, filename, sbuf.st_size, method);
     } else {
         if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
             clienterror(fd, filename, "403", "Forbidden",
                         "Tiny couldn’t run the CGI program");
             return;
         }
-        serve_dynamic(fd, filename, cgiargs);
+        serve_dynamic(fd, filename, cgiargs, method);
     }
 }
 
-void serve_static(int fd, char *filename, int filesize) {
+void serve_static(int fd, char *filename, int filesize, char *method) {
     int srcfd;
-    char *srcp, filetype[MAXLINE], buf[MAXBUF];
+    char *srcp, filetype[MAXLINE], buf[MAXBUF], *buffer;
 
     get_filetype(filename, filetype);
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
@@ -68,14 +72,22 @@ void serve_static(int fd, char *filename, int filesize) {
     printf("Response headers:\n");
     printf("%s", buf);
 
+    if (strcasecmp(method, "HEAD") == 0) {
+        return;
+    }
+
     srcfd = Open(filename, O_RDONLY, 0);
-    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    buffer = (char *)malloc(filesize);
+
+    Rio_readn(srcfd, buffer, filesize);
     close(srcfd);
-    Rio_writen(fd, srcp, filesize);
-    Munmap(srcp, filesize);
+
+    Rio_writen(fd, buffer, filesize);
+
+    free(buffer);
 }
 
-void serve_dynamic(int fd, char *filename, char *cgiargs) {
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method) {
     char buf[MAXLINE], *emptylist[] = {NULL};
 
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
@@ -85,10 +97,21 @@ void serve_dynamic(int fd, char *filename, char *cgiargs) {
 
     if (Fork() == 0) {
         setenv("QUERY_STRING", cgiargs, 1);
+        setenv("REQUEST_METHOD", method, 1);
         Dup2(fd, STDOUT_FILENO);
         Execve(filename, emptylist, environ);
     }
-    wait(NULL);
+}
+
+void sigchld_handler(int sig) {
+    int old_errno = errno;
+    int status;
+    pid_t pid;
+
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+    }
+    errno = old_errno;
+    return;
 }
 
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
@@ -128,22 +151,19 @@ void read_requesthdrs(rio_t *rp) {
 int parse_uri(char *uri, char *filename, char *cgiargs) {
     char *ptr;
 
-    if (!strstr(uri, "cgi-bin")) {
+    if (!strstr(uri, "cgi-bin")) { /* Static content */
         strcpy(cgiargs, "");
         strcpy(filename, ".");
         strcat(filename, uri);
-        if (uri[strlen(uri - 1)] == '/') {
-            strcat(filename, "home.html");
-        }
+        if (uri[strlen(uri) - 1] == '/') strcat(filename, "home.html");
         return 1;
-    } else {
+    } else { /* Dynamic content */
         ptr = index(uri, '?');
         if (ptr) {
             strcpy(cgiargs, ptr + 1);
             *ptr = '\0';
-        } else {
+        } else
             strcpy(cgiargs, "");
-        }
         strcpy(filename, ".");
         strcat(filename, uri);
         return 0;
@@ -159,6 +179,8 @@ void get_filetype(char *filename, char *filetype) {
         strcpy(filetype, "image/png");
     else if (strstr(filename, ".jpg"))
         strcpy(filetype, "image/jpeg");
+    else if (strstr(filename, ".mpeg"))
+        strcpy(filetype, "video/mpg");
     else
         strcpy(filetype, "text/plain");
 }
@@ -170,6 +192,8 @@ int main(int argc, char **argv) {
     char port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
+
+    Signal(SIGCHLD, sigchld_handler);
 
     /* Check command line args */
     if (argc != 2) {

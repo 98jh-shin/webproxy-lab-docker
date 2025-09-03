@@ -40,6 +40,7 @@ void doit(int fd) {
     serverfd = Open_clientfd(hostname, port);
     if (serverfd < 0) {
         printf("Connection failed to %s:%s", hostname, port);
+        fprintf(stderr, "Connection failed to %s:%s\n", hostname, port);
         return;
     }
 
@@ -128,11 +129,51 @@ int parse_uri(char *uri, char *hostname, char *path, char *port) {
     return 0;
 }
 
+void *thread(void *vargp) {
+    int connfd = *((int *)vargp);
+
+    Pthread_detach(pthread_self());
+
+    Free(vargp);
+
+    doit(connfd);
+
+    Close(connfd);
+
+    return NULL;
+}
+
+void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
+                 char *longmsg) {
+    char buf[MAXLINE], body[MAXBUF];
+
+    /* Build the HTTP response body */
+    sprintf(body, "<html><title>Tiny Error</title>");
+    sprintf(body,
+            "%s<body bgcolor="
+            "ffffff"
+            ">\r\n",
+            body);
+    sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
+    sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
+    sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
+
+    /* Print the HTTP response */
+    sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-type: text/html\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    Rio_writen(fd, buf, strlen(buf));
+    Rio_writen(fd, body, strlen(body));
+}
+
 int main(int argc, char **argv) {
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
+    pthread_t tid;
 
     if (argc != 2) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
@@ -143,14 +184,17 @@ int main(int argc, char **argv) {
 
     while (1) {
         clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
-
+        int *connfdp = malloc(sizeof(int));
+        *connfdp = Accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
         Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port,
                     MAXLINE, 0);
+
         printf("Accepted connection from (%s, %s)\n", hostname, port);
-        doit(connfd);
-        close(connfd);
+
+        pthread_create(&tid, NULL, thread, connfdp);
+
     }
 
+    close(listenfd);
     return 0;
 }
